@@ -1,4 +1,6 @@
-import { Link } from "react-router-dom";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { clearAuthUser, getAuthUser, isAdminUser } from "../utils/auth";
 
 const PRICE_DATA = [
   { name: "Charizard Base 1st Ed.", price: "₱85,000", change: "+12.4%", up: true },
@@ -25,7 +27,7 @@ const TickerItems = () =>
     </span>
   ));
 
-const Navbar = () => (
+const Navbar = ({ isAdmin, isLoggedIn, onLogout }) => (
   <>
     {/* Price Ticker */}
     <div className="price-ticker" style={{ position: "fixed", top: 0, left: 0, zIndex: 1001 }}>
@@ -43,17 +45,36 @@ const Navbar = () => (
       <ul className="nav-links">
         <li><Link to="/"      className="nav-link active">Home</Link></li>
         <li><Link to="/item"  className="nav-link">Collection</Link></li>
-        <li><Link to="/add"   className="nav-link">Add Pack</Link></li>
-        <li><Link to="/login" className="nav-link">Login</Link></li>
+        {isAdmin && <li><Link to="/add" className="nav-link">Add Pack</Link></li>}
+        {isLoggedIn ? (
+          <li>
+            <button type="button" className="nav-link" style={{ background: "transparent", cursor: "pointer" }} onClick={onLogout}>
+              Logout
+            </button>
+          </li>
+        ) : (
+          <li><Link to="/login" className="nav-link">Login</Link></li>
+        )}
       </ul>
     </nav>
   </>
 );
 
 export default function Main() {
+  const [authUser, setAuthUser] = useState(() => getAuthUser());
+  const navigate = useNavigate();
+  const isAdmin = isAdminUser();
+  const isLoggedIn = Boolean(authUser);
+
+  const handleLogout = () => {
+    clearAuthUser();
+    setAuthUser(null);
+    navigate("/login");
+  };
+
   return (
     <>
-      <Navbar />
+      <Navbar isAdmin={isAdmin} isLoggedIn={isLoggedIn} onLogout={handleLogout} />
       <div className="page" style={{ overflow: "hidden" }}>
 
         {/* ── HERO ── */}

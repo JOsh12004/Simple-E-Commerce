@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
+import { clearAuthUser, getAuthHeaders, getAuthUser, isAdminUser } from "../utils/auth";
 
 const PRICE_DATA = [
   { name: "Charizard Base 1st Ed.", price: "₱85,000", change: "+12.4%", up: true },
@@ -23,7 +24,7 @@ const TickerItems = () =>
     </span>
   ));
 
-const Navbar = () => (
+const Navbar = ({ isAdmin, isLoggedIn, onLogout }) => (
   <>
     <div className="price-ticker" style={{ position: "fixed", top: 0, left: 0, zIndex: 1001 }}>
       <div className="ticker-track">
@@ -35,17 +36,25 @@ const Navbar = () => (
         TCG<span style={{ color: "var(--masterball-light)" }}>Vault</span>
       </Link>
       <ul className="nav-links">
-        <li><Link to="/"     className="nav-link">Home</Link></li>
+        <li><Link to="/" className="nav-link">Home</Link></li>
         <li><Link to="/item" className="nav-link active">Collection</Link></li>
-        <li><Link to="/add"  className="nav-link">Add Pack</Link></li>
-        <li><Link to="/login" className="nav-link">Login</Link></li>
+        {isAdmin && <li><Link to="/add" className="nav-link">Add Pack</Link></li>}
+        {isLoggedIn ? (
+          <li>
+            <button type="button" className="nav-link" style={{ background: "transparent", cursor: "pointer" }} onClick={onLogout}>
+              Logout
+            </button>
+          </li>
+        ) : (
+          <li><Link to="/login" className="nav-link">Login</Link></li>
+        )}
       </ul>
     </nav>
   </>
 );
 
 // The holofoil card component
-function PackCard({ pack, onEdit, onDelete }) {
+function PackCard({ pack, onEdit, onDelete, isAdmin }) {
   const cardRef = useRef(null);
 
   const handleMouseMove = (e) => {
@@ -185,22 +194,31 @@ function PackCard({ pack, onEdit, onDelete }) {
         )}
 
         {/* Actions */}
-        <div style={{ display: "flex", gap: "8px", marginTop: "4px" }}>
+        {isAdmin ? (
+          <div style={{ display: "flex", gap: "8px", marginTop: "4px" }}>
+            <button
+              className="btn btn-ghost"
+              style={{ flex: 1, fontSize: "12px", padding: "10px" }}
+              onClick={() => onEdit(pack.id)}
+            >
+              Edit
+            </button>
+            <button
+              className="btn btn-danger"
+              style={{ flex: 1, fontSize: "12px", padding: "10px" }}
+              onClick={() => onDelete(pack.id)}
+            >
+              Delete
+            </button>
+          </div>
+        ) : (
           <button
-            className="btn btn-ghost"
-            style={{ flex: 1, fontSize: "12px", padding: "10px" }}
-            onClick={() => onEdit(pack.id)}
+            className="btn btn-primary"
+            style={{ width: "100%", justifyContent: "center", fontSize: "12px", padding: "10px", marginTop: "4px" }}
           >
-            Edit
+            Buy Now
           </button>
-          <button
-            className="btn btn-danger"
-            style={{ flex: 1, fontSize: "12px", padding: "10px" }}
-            onClick={() => onDelete(pack.id)}
-          >
-            Delete
-          </button>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -210,7 +228,16 @@ export default function Shoes() {
   const [packs, setPacks]     = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch]   = useState("");
+  const [authUser, setAuthUser] = useState(() => getAuthUser());
   const navigate = useNavigate();
+  const isAdmin = isAdminUser();
+  const isLoggedIn = Boolean(authUser);
+
+  const handleLogout = () => {
+    clearAuthUser();
+    setAuthUser(null);
+    navigate("/login");
+  };
 
   useEffect(() => {
     axios.get("http://localhost:8800/shoes")
@@ -219,8 +246,12 @@ export default function Shoes() {
   }, []);
 
   const handleDelete = (id) => {
+    if (!isAdmin) {
+      return;
+    }
+
     if (!window.confirm("Remove this pack from the vault?")) return;
-    axios.delete(`http://localhost:8800/shoes/${id}`)
+    axios.delete(`http://localhost:8800/shoes/${id}`, { headers: getAuthHeaders() })
       .then(() => setPacks(prev => prev.filter(p => p.id !== id)))
       .catch(err => console.error(err));
   };
@@ -232,7 +263,7 @@ export default function Shoes() {
 
   return (
     <>
-      <Navbar />
+      <Navbar isAdmin={isAdmin} isLoggedIn={isLoggedIn} onLogout={handleLogout} />
       <div className="page" style={{ padding: "40px 64px 80px", background: "var(--bg)", minHeight: "100vh" }}>
 
         {/* Page header */}
@@ -278,9 +309,11 @@ export default function Shoes() {
               onChange={e => setSearch(e.target.value)}
             />
           </div>
-          <Link to="/add" className="btn btn-purple" style={{ padding: "12px 28px" }}>
-            + Add New Pack
-          </Link>
+          {isAdmin && (
+            <Link to="/add" className="btn btn-purple" style={{ padding: "12px 28px" }}>
+              + Add New Pack
+            </Link>
+          )}
         </div>
 
         {/* Loading */}
@@ -304,11 +337,13 @@ export default function Shoes() {
               No Packs Found
             </h3>
             <p style={{ color: "var(--text-dim)", marginTop: "10px", fontSize: "14px" }}>
-              Try a different search or add your first pack.
+              Try a different search{isAdmin ? " or add your first pack." : "."}
             </p>
-            <Link to="/add" className="btn btn-purple" style={{ marginTop: "28px" }}>
-              Add Your First Pack
-            </Link>
+            {isAdmin && (
+              <Link to="/add" className="btn btn-purple" style={{ marginTop: "28px" }}>
+                Add Your First Pack
+              </Link>
+            )}
           </div>
         )}
 
@@ -323,6 +358,7 @@ export default function Shoes() {
               <PackCard
                 key={pack.id}
                 pack={pack}
+                isAdmin={isAdmin}
                 onEdit={(id) => navigate(`/update/${id}`)}
                 onDelete={handleDelete}
               />

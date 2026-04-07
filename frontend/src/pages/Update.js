@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
+import { clearAuthUser, getAuthHeaders, getAuthUser, isAdminUser } from "../utils/auth";
 
 const PRICE_DATA = [
   { name: "Charizard Base 1st Ed.", price: "₱85,000", change: "+12.4%", up: true },
@@ -23,7 +24,7 @@ const TickerItems = () =>
     </span>
   ));
 
-const Navbar = () => (
+const Navbar = ({ isAdmin, isLoggedIn, onLogout }) => (
   <>
     <div className="price-ticker" style={{ position: "fixed", top: 0, left: 0, zIndex: 1001 }}>
       <div className="ticker-track"><TickerItems /><TickerItems /></div>
@@ -35,8 +36,16 @@ const Navbar = () => (
       <ul className="nav-links">
         <li><Link to="/"     className="nav-link">Home</Link></li>
         <li><Link to="/item" className="nav-link">Collection</Link></li>
-        <li><Link to="/add"  className="nav-link">Add Pack</Link></li>
-        <li><Link to="/login" className="nav-link">Login</Link></li>
+        {isAdmin && <li><Link to="/add" className="nav-link">Add Pack</Link></li>}
+        {isLoggedIn ? (
+          <li>
+            <button type="button" className="nav-link" style={{ background: "transparent", cursor: "pointer" }} onClick={onLogout}>
+              Logout
+            </button>
+          </li>
+        ) : (
+          <li><Link to="/login" className="nav-link">Login</Link></li>
+        )}
       </ul>
     </nav>
   </>
@@ -52,8 +61,25 @@ export default function Update() {
   const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(true);
+  const [authUser, setAuthUser] = useState(() => getAuthUser());
+  const isAdmin = isAdminUser();
+  const isLoggedIn = Boolean(authUser);
+
+  const handleLogout = () => {
+    clearAuthUser();
+    setAuthUser(null);
+    navigate("/login");
+  };
 
   useEffect(() => {
+    if (!isAdmin) {
+      navigate("/item");
+    }
+  }, [isAdmin, navigate]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+
     axios.get(`http://localhost:8800/shoes/${id}`)
       .then(res => {
         const { prod_name, prod_description, image, price } = res.data;
@@ -61,7 +87,7 @@ export default function Update() {
         setFetching(false);
       })
       .catch(() => { setError("Could not load pack data."); setFetching(false); });
-  }, [id]);
+  }, [id, isAdmin]);
 
   const handleChange = (e) =>
     setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
@@ -74,7 +100,7 @@ export default function Update() {
     }
     setLoading(true);
     try {
-      await axios.put(`http://localhost:8800/shoes/${id}`, form);
+      await axios.put(`http://localhost:8800/shoes/${id}`, form, { headers: getAuthHeaders() });
       setSuccess("Pack updated successfully!");
       setTimeout(() => navigate("/item"), 1200);
     } catch (err) {
@@ -86,7 +112,7 @@ export default function Update() {
 
   return (
     <>
-      <Navbar />
+      <Navbar isAdmin={isAdmin} isLoggedIn={isLoggedIn} onLogout={handleLogout} />
       <div className="page" style={{
         background: "var(--bg)",
         minHeight: "100vh",

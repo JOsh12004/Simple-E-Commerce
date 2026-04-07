@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
+import { saveAuthSession } from "../utils/auth";
 
 export default function Login() {
   const [form, setForm]       = useState({ email: "", password: "" });
@@ -17,7 +18,10 @@ export default function Login() {
     if (!form.email || !form.password) { setError("All fields are required."); return; }
     setLoading(true);
     try {
-      await axios.post("http://localhost:8800/login", form);
+      const response = await axios.post("http://localhost:8800/login", form);
+
+      // Persist signed session so protected requests can send Bearer token.
+      saveAuthSession({ user: response.data.user, token: response.data.token });
       navigate("/item");
     } catch (err) {
       setError(err.response?.data?.error || "Invalid credentials. Please try again.");
@@ -56,6 +60,42 @@ export default function Login() {
       </div>
 
       <div className="auth-box">
+        <Link
+          to="/"
+          aria-label="Close login"
+          title="Close"
+          style={{
+            position: "absolute",
+            top: "14px",
+            right: "14px",
+            width: "34px",
+            height: "34px",
+            borderRadius: "999px",
+            border: "1px solid var(--border-hi)",
+            color: "var(--text-muted)",
+            background: "rgba(255,255,255,0.03)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            textDecoration: "none",
+            fontFamily: "var(--font-heading)",
+            fontSize: "16px",
+            fontWeight: "800",
+            lineHeight: 1,
+            transition: "all 0.2s ease",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = "var(--text)";
+            e.currentTarget.style.background = "rgba(255,255,255,0.08)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = "var(--text-muted)";
+            e.currentTarget.style.background = "rgba(255,255,255,0.03)";
+          }}
+        >
+          ×
+        </Link>
+
         {/* Logo */}
         <Link to="/" style={{ textDecoration: "none", display: "inline-block", marginBottom: "24px" }}>
           <div style={{
