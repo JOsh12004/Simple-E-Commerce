@@ -8,7 +8,8 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  const handleChange = (e) => setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
+  const handleChange = (e) =>
+    setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -19,7 +20,7 @@ export default function Login() {
       await axios.post("http://localhost:8800/login", form);
       navigate("/item");
     } catch (err) {
-      setError(err.response?.data?.error || "Invalid credentials.");
+      setError(err.response?.data?.error || "Invalid credentials. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -27,63 +28,121 @@ export default function Login() {
 
   return (
     <div className="auth-page">
-      {/* BG circles */}
+      {/* Background orbs */}
+      <div className="auth-bg-orb auth-bg-orb-1" />
+      <div className="auth-bg-orb auth-bg-orb-2" />
+
+      {/* Background grid */}
       <div style={{
-        position: "absolute", top: "-150px", right: "-150px",
-        width: "600px", height: "600px", borderRadius: "50%",
-        border: "80px solid rgba(227,0,11,0.07)", pointerEvents: "none",
+        position: "absolute",
+        inset: 0,
+        backgroundImage: `
+          linear-gradient(rgba(98,45,143,0.04) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(98,45,143,0.04) 1px, transparent 1px)
+        `,
+        backgroundSize: "60px 60px",
+        pointerEvents: "none",
       }} />
+
+      {/* Left brand panel */}
       <div style={{
-        position: "absolute", bottom: "-200px", left: "-100px",
-        width: "500px", height: "500px", borderRadius: "50%",
-        border: "60px solid rgba(255,215,0,0.05)", pointerEvents: "none",
-      }} />
+        display: "none",
+        position: "absolute",
+        left: "10%",
+        top: "50%",
+        transform: "translateY(-50%)",
+      }}>
+        {/* Desktop branding - hidden on smaller screens */}
+      </div>
 
       <div className="auth-box">
         {/* Logo */}
-        <Link to="/" style={{ textDecoration: "none" }}>
-          <div className="auth-title">PokeHub</div>
+        <Link to="/" style={{ textDecoration: "none", display: "inline-block", marginBottom: "24px" }}>
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+          }}>
+            <div className="auth-logo-dot" />
+            <span style={{
+              fontFamily: "var(--font-heading)",
+              fontSize: "22px",
+              fontWeight: "900",
+              letterSpacing: "-0.5px",
+              color: "var(--text)",
+            }}>
+              TCG<span style={{ color: "var(--masterball-light)" }}>Vault</span>
+            </span>
+          </div>
         </Link>
-        <p className="auth-subtitle">Sign in to your trainer account</p>
 
-        {error && <div className="auth-error" style={{ marginBottom: "20px" }}>{error}</div>}
+        <h1 style={{
+          fontFamily: "var(--font-heading)",
+          fontSize: "28px",
+          fontWeight: "900",
+          letterSpacing: "-0.8px",
+          color: "var(--text)",
+          marginBottom: "6px",
+        }}>
+          Welcome back
+        </h1>
+
+        <p className="auth-subtitle">Sign in to access your collection</p>
+
+        {error && (
+          <div className="alert alert-error" style={{ marginBottom: "24px" }}>
+            <span>⚠</span>
+            <span>{error}</span>
+          </div>
+        )}
 
         <form className="auth-form" onSubmit={handleSubmit}>
           <div className="form-group">
-            <label>Email</label>
+            <label>Email Address</label>
             <input
-              type="email" name="email" value={form.email}
-              onChange={handleChange} placeholder="trainer@pokehub.com"
+              type="email"
+              name="email"
+              value={form.email}
+              onChange={handleChange}
+              placeholder="trainer@tcgvault.com"
+              autoComplete="email"
             />
           </div>
+
           <div className="form-group">
             <label>Password</label>
             <input
-              type="password" name="password" value={form.password}
-              onChange={handleChange} placeholder="••••••••"
+              type="password"
+              name="password"
+              value={form.password}
+              onChange={handleChange}
+              placeholder="••••••••"
+              autoComplete="current-password"
             />
           </div>
 
           <button
-            type="submit" className="btn btn-primary"
-            style={{ fontSize: "16px", padding: "14px", width: "100%", marginTop: "8px" }}
+            type="submit"
+            className="btn btn-primary"
+            style={{ width: "100%", justifyContent: "center", padding: "16px", fontSize: "14px", marginTop: "8px" }}
             disabled={loading}
           >
-            {loading ? "Signing in..." : "Sign In →"}
+            {loading ? (
+              <>
+                <span style={{ animation: "pulse 1s infinite" }}>◆</span>
+                Signing in...
+              </>
+            ) : (
+              "Sign In →"
+            )}
           </button>
         </form>
 
-        <div className="auth-footer">
-          Don't have an account? <Link to="/signup">Register here</Link>
-        </div>
+        <div className="divider-full" />
 
-        {/* Pokeball divider */}
-        <div style={{
-          margin: "24px 0 0",
-          height: "3px",
-          background: "linear-gradient(90deg, var(--red) 50%, var(--yellow) 50%)",
-          opacity: 0.4,
-        }} />
+        <div className="auth-footer">
+          New to the vault? <Link to="/signup">Create an account</Link>
+        </div>
       </div>
     </div>
   );
