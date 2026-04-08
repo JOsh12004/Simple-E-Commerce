@@ -36,6 +36,7 @@ const Navbar = ({ isAdmin, isLoggedIn, onLogout }) => (
       <ul className="nav-links">
         <li><Link to="/"     className="nav-link">Home</Link></li>
         <li><Link to="/item" className="nav-link">Collection</Link></li>
+        {isLoggedIn && <li><Link to="/orders" className="nav-link">Orders</Link></li>}
         {isAdmin && <li><Link to="/add" className="nav-link">Add Pack</Link></li>}
         {isLoggedIn ? (
           <li>

@@ -5,6 +5,7 @@ import Add from "./pages/Add";
 import Update from "./pages/Update";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
+import Orders from "./pages/Orders";
 import "./style.css";
 
 function App() {
@@ -16,6 +17,7 @@ function App() {
           <Route path="/item"       element={<Shoes />} />
           <Route path="/add"        element={<Add />} />
           <Route path="/update/:id" element={<Update />} />
+          <Route path="/orders"     element={<Orders />} />
           <Route path="/login"      element={<Login />} />
           <Route path="/signup"     element={<Signup />} />
         </Routes>

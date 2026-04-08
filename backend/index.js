@@ -11,6 +11,7 @@ app.use(cors());
 const JWT_SECRET = process.env.JWT_SECRET || "change-this-jwt-secret";
 
 const LOW_STOCK_THRESHOLD = 5;
+const ORDER_STATUSES = ["Pending", "Paid", "Shipped", "Delivered", "Cancelled"];
 
 const dbQuery = (sql, params = []) =>
     new Promise((resolve, reject) => {
@@ -161,6 +162,157 @@ const ensureShoesSchema = async () => {
     await ensureShoesColumn("rating", "DECIMAL(2,1) NULL");
 };
 
+const ensureOrdersSchema = async () => {
+    // Orders and order items are created lazily so existing environments keep working.
+    await dbQuery(`
+        CREATE TABLE IF NOT EXISTS orders (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            order_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            status ENUM('Pending', 'Paid', 'Shipped', 'Delivered', 'Cancelled') NOT NULL DEFAULT 'Pending',
+            total_amount DECIMAL(10,2) NOT NULL,
+            shipping_address VARCHAR(255) NOT NULL,
+            INDEX idx_orders_user_id (user_id),
+            INDEX idx_orders_status (status),
+            CONSTRAINT fk_orders_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    `);
+
+    await dbQuery(`
+        CREATE TABLE IF NOT EXISTS order_items (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            order_id INT NOT NULL,
+            product_id INT NOT NULL,
+            quantity INT NOT NULL,
+            unit_price DECIMAL(10,2) NOT NULL,
+            INDEX idx_order_items_order_id (order_id),
+            INDEX idx_order_items_product_id (product_id),
+            CONSTRAINT fk_order_items_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+            CONSTRAINT fk_order_items_product FOREIGN KEY (product_id) REFERENCES shoes(id) ON DELETE RESTRICT
+        )
+    `);
+};
+
+const parseOrderItems = (items) => {
+    if (!Array.isArray(items)) {
+        return [];
+    }
+
+    return items
+        .map((item) => {
+            const productID = Number(item?.productID);
+            const quantity = Number(item?.quantity);
+            return {
+                productID,
+                quantity,
+            };
+        })
+        .filter((item) => Number.isInteger(item.productID) && Number.isInteger(item.quantity));
+};
+
+const validateOrderPayload = (body, options = { partial: false }) => {
+    const partial = Boolean(options.partial);
+    const rawStatus = (body.status ?? "").toString().trim();
+    const status = rawStatus || "Pending";
+    const itemsProvided = body.items !== undefined;
+    const items = parseOrderItems(body.items);
+    const totalAmount = Number(body.totalAmount);
+    const shippingAddress = (body.shippingAddress ?? "").toString().trim();
+    const userID = Number(body.userID);
+    const errors = [];
+
+    const pushError = (field, message) => {
+        errors.push({ field, message });
+    };
+
+    if (!partial || body.userID !== undefined) {
+        if (!Number.isInteger(userID) || userID <= 0) {
+            pushError("userID", "userID must be a valid positive integer.");
+        }
+    }
+
+    if (!partial || body.status !== undefined) {
+        if (!ORDER_STATUSES.includes(status)) {
+            pushError("status", `status must be one of: ${ORDER_STATUSES.join(", ")}.`);
+        }
+    }
+
+    if (!partial || itemsProvided) {
+        if (!Array.isArray(body.items) || items.length === 0) {
+            pushError("items", "items must include at least one product with quantity.");
+        }
+
+        if (items.some((item) => item.quantity < 1)) {
+            pushError("items", "Each item quantity must be at least 1.");
+        }
+    }
+
+    if (!partial || body.totalAmount !== undefined) {
+        if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+            pushError("totalAmount", "totalAmount must be a numeric value greater than 0.");
+        }
+    }
+
+    if (!partial || body.shippingAddress !== undefined) {
+        if (shippingAddress.length < 10 || shippingAddress.length > 255) {
+            pushError("shippingAddress", "shippingAddress must be between 10 and 255 characters.");
+        }
+    }
+
+    return {
+        errors,
+        values: {
+            userID,
+            status,
+            items,
+            totalAmount,
+            shippingAddress,
+        },
+    };
+};
+
+const getOrderItems = async (orderId) => {
+    const rows = await dbQuery(
+        `SELECT oi.product_id, oi.quantity, oi.unit_price, s.prod_name
+         FROM order_items oi
+         LEFT JOIN shoes s ON s.id = oi.product_id
+         WHERE oi.order_id = ?
+         ORDER BY oi.id ASC`,
+        [orderId]
+    );
+
+    return rows.map((item) => ({
+        productID: item.product_id,
+        quantity: item.quantity,
+        unitPrice: Number(item.unit_price),
+        title: item.prod_name || null,
+    }));
+};
+
+const buildOrderResponse = (orderRow, items = []) => ({
+    orderID: orderRow.id,
+    userID: orderRow.user_id,
+    orderDate: orderRow.order_date,
+    status: orderRow.status,
+    items,
+    totalAmount: Number(orderRow.total_amount),
+    shippingAddress: orderRow.shipping_address,
+});
+
+const userExists = async (userId) => {
+    const rows = await dbQuery("SELECT id FROM users WHERE id = ? LIMIT 1", [userId]);
+    return rows.length > 0;
+};
+
+const getProductsByIds = async (productIds) => {
+    if (productIds.length === 0) {
+        return [];
+    }
+
+    const placeholders = productIds.map(() => "?").join(",");
+    return dbQuery(`SELECT id, price FROM shoes WHERE id IN (${placeholders})`, productIds);
+};
+
 const normalizeRole = (rawRole) => {
     const role = (rawRole || "").toString().trim().toLowerCase();
     return role === "admin" ? "admin" : "user";
@@ -205,6 +357,9 @@ db.connect((err) => {
     }
 
     ensureShoesSchema()
+        .then(() => {
+            return ensureOrdersSchema();
+        })
         .then(() => {
             console.log("Connected to the database.");
         })
@@ -432,6 +587,222 @@ app.delete("/shoes/:id", requireAuth, requireAdmin, (req, res) => {
         if (err) return res.status(500).json({ error: err.sqlMessage || "Database Error" });
         return res.status(200).json({ message: "Shoe deleted successfully!" });
     });
+});
+
+// ─── ORDERS Routes ─────────────────────────────────────────────────────────────
+
+// POST /orders — Place a new order
+app.post("/orders", requireAuth, async (req, res) => {
+    if (req.auth.role === "admin") {
+        return res.status(403).json({
+            success: false,
+            message: "Admin accounts cannot place orders. Use a customer account as the buyer.",
+        });
+    }
+
+    // Buyer must always be the authenticated user, not a userID supplied by the client.
+    const payload = {
+        ...req.body,
+        userID: Number(req.auth.id),
+        // Customer checkout always starts as Pending. Only admins can change status later.
+        status: "Pending",
+    };
+
+    const { errors, values } = validateOrderPayload(payload);
+    if (errors.length > 0) {
+        return res.status(400).json({ success: false, message: "Validation failed.", errors });
+    }
+
+    try {
+        const hasUser = await userExists(values.userID);
+        if (!hasUser) {
+            return res.status(404).json({ success: false, message: "userID does not exist." });
+        }
+
+        const uniqueProductIds = [...new Set(values.items.map((item) => item.productID))];
+        const products = await getProductsByIds(uniqueProductIds);
+        if (products.length !== uniqueProductIds.length) {
+            return res.status(400).json({ success: false, message: "One or more product IDs are invalid." });
+        }
+
+        const productPriceMap = new Map(products.map((product) => [product.id, Number(product.price)]));
+        const calculatedTotal = values.items.reduce((sum, item) => {
+            const unitPrice = productPriceMap.get(item.productID) || 0;
+            return sum + unitPrice * item.quantity;
+        }, 0);
+
+        // Prevent mismatched totals by using server-side calculation as source of truth.
+        const normalizedTotalAmount = Number(calculatedTotal.toFixed(2));
+
+        const orderResult = await dbQuery(
+            "INSERT INTO orders (user_id, status, total_amount, shipping_address) VALUES (?, ?, ?, ?)",
+            [values.userID, values.status, normalizedTotalAmount, values.shippingAddress]
+        );
+
+        const orderID = orderResult.insertId;
+        for (const item of values.items) {
+            await dbQuery(
+                "INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?)",
+                [orderID, item.productID, item.quantity, productPriceMap.get(item.productID)]
+            );
+        }
+
+        const createdOrderRows = await dbQuery("SELECT * FROM orders WHERE id = ?", [orderID]);
+        const createdItems = await getOrderItems(orderID);
+        return res.status(201).json({
+            success: true,
+            data: buildOrderResponse(createdOrderRows[0], createdItems),
+        });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: err.sqlMessage || "Database Error" });
+    }
+});
+
+// GET /orders — Read orders (admin gets all, users get their own)
+app.get("/orders", requireAuth, async (req, res) => {
+    try {
+        const isAdmin = req.auth.role === "admin";
+        const orderRows = isAdmin
+            ? await dbQuery("SELECT * FROM orders ORDER BY id DESC")
+            : await dbQuery("SELECT * FROM orders WHERE user_id = ? ORDER BY id DESC", [req.auth.id]);
+
+        const orders = [];
+        for (const orderRow of orderRows) {
+            const items = await getOrderItems(orderRow.id);
+            orders.push(buildOrderResponse(orderRow, items));
+        }
+
+        return res.status(200).json({ success: true, data: orders });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: err.sqlMessage || "Database Error" });
+    }
+});
+
+// GET /orders/:id — Read one order in detail
+app.get("/orders/:id", requireAuth, async (req, res) => {
+    const orderID = Number(req.params.id);
+    if (!Number.isInteger(orderID) || orderID <= 0) {
+        return res.status(400).json({ success: false, message: "Order id must be a positive integer." });
+    }
+
+    try {
+        const rows = await dbQuery("SELECT * FROM orders WHERE id = ? LIMIT 1", [orderID]);
+        if (rows.length === 0) {
+            return res.status(404).json({ success: false, message: "Order not found." });
+        }
+
+        const order = rows[0];
+        if (req.auth.role !== "admin" && Number(req.auth.id) !== Number(order.user_id)) {
+            return res.status(403).json({ success: false, message: "You cannot access this order." });
+        }
+
+        const items = await getOrderItems(orderID);
+        return res.status(200).json({ success: true, data: buildOrderResponse(order, items) });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: err.sqlMessage || "Database Error" });
+    }
+});
+
+// PUT /orders/:id — Update order status/details
+app.put("/orders/:id", requireAuth, async (req, res) => {
+    const orderID = Number(req.params.id);
+    if (!Number.isInteger(orderID) || orderID <= 0) {
+        return res.status(400).json({ success: false, message: "Order id must be a positive integer." });
+    }
+
+    const { errors, values } = validateOrderPayload(req.body, { partial: true });
+    if (errors.length > 0) {
+        return res.status(400).json({ success: false, message: "Validation failed.", errors });
+    }
+
+    try {
+        const rows = await dbQuery("SELECT * FROM orders WHERE id = ? LIMIT 1", [orderID]);
+        if (rows.length === 0) {
+            return res.status(404).json({ success: false, message: "Order not found." });
+        }
+
+        const currentOrder = rows[0];
+        const isOwner = Number(req.auth.id) === Number(currentOrder.user_id);
+        const isAdmin = req.auth.role === "admin";
+        if (!isOwner && !isAdmin) {
+            return res.status(403).json({ success: false, message: "You cannot update this order." });
+        }
+
+        if (!isAdmin && req.body.status !== undefined) {
+            return res.status(403).json({ success: false, message: "Only admins can update order status." });
+        }
+
+        const nextStatus = req.body.status !== undefined ? values.status : currentOrder.status;
+        const nextShippingAddress =
+            req.body.shippingAddress !== undefined ? values.shippingAddress : currentOrder.shipping_address;
+
+        let nextTotalAmount = Number(currentOrder.total_amount);
+        if (req.body.items !== undefined) {
+            const uniqueProductIds = [...new Set(values.items.map((item) => item.productID))];
+            const products = await getProductsByIds(uniqueProductIds);
+            if (products.length !== uniqueProductIds.length) {
+                return res.status(400).json({ success: false, message: "One or more product IDs are invalid." });
+            }
+
+            const productPriceMap = new Map(products.map((product) => [product.id, Number(product.price)]));
+            nextTotalAmount = Number(
+                values.items
+                    .reduce((sum, item) => sum + (productPriceMap.get(item.productID) || 0) * item.quantity, 0)
+                    .toFixed(2)
+            );
+
+            await dbQuery("DELETE FROM order_items WHERE order_id = ?", [orderID]);
+            for (const item of values.items) {
+                await dbQuery(
+                    "INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?)",
+                    [orderID, item.productID, item.quantity, productPriceMap.get(item.productID)]
+                );
+            }
+        } else if (req.body.totalAmount !== undefined) {
+            nextTotalAmount = values.totalAmount;
+        }
+
+        await dbQuery(
+            "UPDATE orders SET status = ?, total_amount = ?, shipping_address = ? WHERE id = ?",
+            [nextStatus, nextTotalAmount, nextShippingAddress, orderID]
+        );
+
+        const updatedRows = await dbQuery("SELECT * FROM orders WHERE id = ?", [orderID]);
+        const updatedItems = await getOrderItems(orderID);
+        return res.status(200).json({
+            success: true,
+            data: buildOrderResponse(updatedRows[0], updatedItems),
+        });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: err.sqlMessage || "Database Error" });
+    }
+});
+
+// DELETE /orders/:id — Delete order and related items
+app.delete("/orders/:id", requireAuth, async (req, res) => {
+    const orderID = Number(req.params.id);
+    if (!Number.isInteger(orderID) || orderID <= 0) {
+        return res.status(400).json({ success: false, message: "Order id must be a positive integer." });
+    }
+
+    try {
+        const rows = await dbQuery("SELECT * FROM orders WHERE id = ? LIMIT 1", [orderID]);
+        if (rows.length === 0) {
+            return res.status(404).json({ success: false, message: "Order not found." });
+        }
+
+        const order = rows[0];
+        const isOwner = Number(req.auth.id) === Number(order.user_id);
+        const isAdmin = req.auth.role === "admin";
+        if (!isOwner && !isAdmin) {
+            return res.status(403).json({ success: false, message: "You cannot delete this order." });
+        }
+
+        await dbQuery("DELETE FROM orders WHERE id = ?", [orderID]);
+        return res.status(200).json({ success: true, message: "Order deleted successfully." });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: err.sqlMessage || "Database Error" });
+    }
 });
 
 // ─── Start Server ──────────────────────────────────────────────────────────────

@@ -38,6 +38,7 @@ const Navbar = ({ isAdmin, isLoggedIn, onLogout }) => (
       <ul className="nav-links">
         <li><Link to="/" className="nav-link">Home</Link></li>
         <li><Link to="/item" className="nav-link active">Collection</Link></li>
+        {isLoggedIn && <li><Link to="/orders" className="nav-link">Orders</Link></li>}
         {isAdmin && <li><Link to="/add" className="nav-link">Add Pack</Link></li>}
         {isLoggedIn ? (
           <li>
@@ -54,7 +55,7 @@ const Navbar = ({ isAdmin, isLoggedIn, onLogout }) => (
 );
 
 // The holofoil card component
-function PackCard({ pack, onEdit, onDelete, isAdmin }) {
+function PackCard({ pack, onEdit, onDelete, onBuy, isAdmin, isLoggedIn }) {
   const cardRef = useRef(null);
   const imageSrc = (Array.isArray(pack.images) && pack.images[0]) || pack.image;
 
@@ -239,8 +240,9 @@ function PackCard({ pack, onEdit, onDelete, isAdmin }) {
           <button
             className="btn btn-primary"
             style={{ width: "100%", justifyContent: "center", fontSize: "12px", padding: "10px", marginTop: "4px" }}
+            onClick={() => onBuy(pack)}
           >
-            Buy Now
+            {isLoggedIn ? "Buy Now" : "Login to Buy"}
           </button>
         )}
       </div>
@@ -294,6 +296,15 @@ export default function Shoes() {
     axios.delete(`http://localhost:8800/shoes/${id}`, { headers: getAuthHeaders() })
       .then(() => setPacks(prev => prev.filter(p => p.id !== id)))
       .catch(err => console.error(err));
+  };
+
+  const handleBuyNow = (pack) => {
+    if (!isLoggedIn) {
+      navigate("/login");
+      return;
+    }
+
+    navigate(`/orders?productID=${pack.id}`);
   };
 
   const categories = Array.from(new Set(
@@ -473,8 +484,10 @@ export default function Shoes() {
                 key={pack.id}
                 pack={pack}
                 isAdmin={isAdmin}
+                isLoggedIn={isLoggedIn}
                 onEdit={(id) => navigate(`/update/${id}`)}
                 onDelete={handleDelete}
+                onBuy={handleBuyNow}
               />
             ))}
           </div>
