@@ -56,6 +56,7 @@ const Navbar = ({ isAdmin, isLoggedIn, onLogout }) => (
 // The holofoil card component
 function PackCard({ pack, onEdit, onDelete, isAdmin }) {
   const cardRef = useRef(null);
+  const imageSrc = (Array.isArray(pack.images) && pack.images[0]) || pack.image;
 
   const handleMouseMove = (e) => {
     const card = cardRef.current;
@@ -118,7 +119,7 @@ function PackCard({ pack, onEdit, onDelete, isAdmin }) {
         flexShrink: 0,
       }}>
         <img
-          src={pack.image || "https://placehold.co/300x260/1F2937/622D8F?text=TCG+Pack"}
+          src={imageSrc || "https://placehold.co/300x260/1F2937/622D8F?text=TCG+Pack"}
           alt={pack.prod_name}
           style={{
             width: "100%",
@@ -178,6 +179,29 @@ function PackCard({ pack, onEdit, onDelete, isAdmin }) {
           {pack.prod_name}
         </h2>
 
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          {pack.category && (
+            <span className="rarity-badge" style={{ fontSize: "10px" }}>
+              {pack.category}
+            </span>
+          )}
+          {Number.isFinite(Number(pack.rating)) && Number(pack.rating) > 0 && (
+            <span className="rarity-badge rarity-rare" style={{ fontSize: "10px" }}>
+              {Number(pack.rating).toFixed(1)}★
+            </span>
+          )}
+          <span
+            className="rarity-badge"
+            style={{
+              fontSize: "10px",
+              borderColor: Number(pack.quantity) <= 5 ? "#ef4444" : "var(--border-hi)",
+              color: Number(pack.quantity) <= 5 ? "#ef4444" : "var(--text-muted)",
+            }}
+          >
+            Stock: {Number(pack.quantity) || 0}
+          </span>
+        </div>
+
         {pack.prod_description && (
           <p style={{
             fontSize: "13px",
@@ -228,6 +252,11 @@ export default function Shoes() {
   const [packs, setPacks]     = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch]   = useState("");
+  const [minPrice, setMinPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [minRating, setMinRating] = useState("0");
+  const [lowStock, setLowStock] = useState([]);
   const [authUser, setAuthUser] = useState(() => getAuthUser());
   const navigate = useNavigate();
   const isAdmin = isAdminUser();
@@ -245,6 +274,17 @@ export default function Shoes() {
       .catch(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    if (!isAdmin) {
+      setLowStock([]);
+      return;
+    }
+
+    axios.get("http://localhost:8800/shoes/low-stock", { headers: getAuthHeaders() })
+      .then(res => setLowStock(res.data?.items || []))
+      .catch(() => setLowStock([]));
+  }, [isAdmin]);
+
   const handleDelete = (id) => {
     if (!isAdmin) {
       return;
@@ -256,10 +296,30 @@ export default function Shoes() {
       .catch(err => console.error(err));
   };
 
-  const filtered = packs.filter(p =>
-    p.prod_name?.toLowerCase().includes(search.toLowerCase()) ||
-    p.prod_description?.toLowerCase().includes(search.toLowerCase())
-  );
+  const categories = Array.from(new Set(
+    packs
+      .map((p) => p.category)
+      .filter((value) => typeof value === "string" && value.trim())
+  ));
+
+  const filtered = packs.filter((p) => {
+    const keyword = search.trim().toLowerCase();
+    const name = (p.prod_name || p.title || "").toLowerCase();
+    const description = (p.prod_description || p.description || "").toLowerCase();
+    const price = Number(p.price) || 0;
+    const rating = Number(p.rating) || 0;
+    const category = (p.category || "").toLowerCase();
+    const min = minPrice === "" ? null : Number(minPrice);
+    const max = maxPrice === "" ? null : Number(maxPrice);
+
+    const matchesKeyword = !keyword || name.includes(keyword) || description.includes(keyword);
+    const matchesMinPrice = min === null || (!Number.isNaN(min) && price >= min);
+    const matchesMaxPrice = max === null || (!Number.isNaN(max) && price <= max);
+    const matchesCategory = categoryFilter === "all" || category === categoryFilter.toLowerCase();
+    const matchesRating = rating >= Number(minRating || 0);
+
+    return matchesKeyword && matchesMinPrice && matchesMaxPrice && matchesCategory && matchesRating;
+  });
 
   return (
     <>
@@ -315,6 +375,60 @@ export default function Shoes() {
             </Link>
           )}
         </div>
+
+        {/* Advanced filters */}
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+          gap: "12px",
+          marginBottom: "28px",
+        }}>
+          <input
+            type="number"
+            className="search-input"
+            placeholder="Min Price"
+            value={minPrice}
+            min="0"
+            onChange={(e) => setMinPrice(e.target.value)}
+          />
+          <input
+            type="number"
+            className="search-input"
+            placeholder="Max Price"
+            value={maxPrice}
+            min="0"
+            onChange={(e) => setMaxPrice(e.target.value)}
+          />
+          <select
+            className="search-input"
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+          >
+            <option value="all">All Categories</option>
+            {categories.map((item) => (
+              <option key={item} value={item}>{item}</option>
+            ))}
+          </select>
+          <select
+            className="search-input"
+            value={minRating}
+            onChange={(e) => setMinRating(e.target.value)}
+          >
+            <option value="0">Any Rating</option>
+            <option value="1">1+ Stars</option>
+            <option value="2">2+ Stars</option>
+            <option value="3">3+ Stars</option>
+            <option value="4">4+ Stars</option>
+            <option value="5">5 Stars</option>
+          </select>
+        </div>
+
+        {isAdmin && lowStock.length > 0 && (
+          <div className="alert alert-error" style={{ marginBottom: "20px" }}>
+            <span>⚠</span>
+            <span>{lowStock.length} product(s) are low on stock (5 or fewer left).</span>
+          </div>
+        )}
 
         {/* Loading */}
         {loading && (
